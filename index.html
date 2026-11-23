@@ -65,6 +65,18 @@
 
     .hidden { display: none !important; }
 
+    /* PROTEKSI TAMPILAN SAAT SCREENSHOT / KEHILANGAN FOKUS */
+    .screen-protected {
+      filter: blur(18px) brightness(0.65);
+      transition: filter 0.15s ease;
+    }
+
+    @media print {
+      body {
+        display: none !important;
+      }
+    }
+
     /* LOGIN SCREEN */
     .login-header {
       background: linear-gradient(135deg, #1e3a8a, #2563eb);
@@ -531,7 +543,7 @@
           <li>Waktu pengerjaan ujian adalah <strong>10 menit</strong>. Timer berjalan otomatis saat tombol <strong>Mulai Ujian</strong> ditekan.</li>
           <li>Soal ditampilkan <strong>satu soal per halaman</strong> secara acak. Gunakan tombol <strong>Sebelumnya</strong> dan <strong>Berikutnya</strong> untuk berpindah soal.</li>
           <li>Sistem dilengkapi fitur <strong>Anti-Curang & Kunci Layar (Fullscreen)</strong> di HP, Android, iPhone, Laptop, maupun Chromebook.</li>
-          <li>Dilarang berpindah tab, membuka aplikasi lain, meminimalkan layar (*minimize*), atau keluar dari mode layar penuh.</li>
+          <li>Dilarang berpindah tab, membuka aplikasi lain, meminimalkan layar (*minimize*), melakukan *screenshot*, atau keluar dari mode layar penuh.</li>
           <li>Batas toleransi pelanggaran adalah <strong>3 kali</strong>. Pada pelanggaran ke-3, ujian akan otomatis dihentikan dan nilai langsung dikirim.</li>
         </ol>
       </div>
@@ -806,20 +818,35 @@
         `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
     }
 
-    // 5. SISTEM ANTI-CURANG (HP, ANDROID, IPHONE, LAPTOP, CHROMEBOOK)
+    // 5. SISTEM ANTI-CURANG (HP, ANDROID, IPHONE, LAPTOP, CHROMEBOOK + DETEKSI SCREENSHOT)
     function activateAntiCheat() {
-      // Deteksi pindah tab / minimize / lock screen HP
+      const applyBlur = (active) => {
+        Object.values(screens).forEach(s => {
+          if (active) s.classList.add('screen-protected');
+          else s.classList.remove('screen-protected');
+        });
+      };
+
+      // Deteksi pindah tab / minimize / lock screen HP / munculnya menu screenshot
       document.addEventListener('visibilitychange', () => {
         if (document.hidden && examActive && !isSubmitting) {
-          triggerCheatViolation('Terdeteksi meninggalkan halaman ujian atau berpindah tab/aplikasi.');
+          applyBlur(true);
+          triggerCheatViolation('Terdeteksi meninggalkan halaman ujian, berpindah tab/aplikasi, atau melakukan tangkapan layar (screenshot).');
+        } else {
+          applyBlur(false);
         }
       });
 
-      // Deteksi kehilangan fokus window (split screen / popup / pindah aplikasi di laptop & HP)
+      // Deteksi kehilangan fokus window (sering terjadi saat overlay screenshot / snipping tool muncul)
       window.addEventListener('blur', () => {
         if (examActive && !isSubmitting) {
-          triggerCheatViolation('Terdeteksi keluar dari fokus layar ujian.');
+          applyBlur(true);
+          triggerCheatViolation('Terdeteksi keluar dari fokus layar ujian / aktivitas tangkapan layar (screenshot).');
         }
+      });
+
+      window.addEventListener('focus', () => {
+        applyBlur(false);
       });
 
       // Deteksi keluar dari mode layar penuh (Fullscreen)
@@ -829,11 +856,47 @@
         }
       });
 
-      // Blokir klik kanan & pintasan keyboard curang
+      // Blokir klik kanan & deteksi tombol screenshot / shortcut keyboard
       document.addEventListener('contextmenu', e => e.preventDefault());
+
       document.addEventListener('keydown', e => {
-        if (e.key === 'F12' || (e.ctrlKey && ['c', 'v', 'u', 's', 'p'].includes(e.key.toLowerCase()))) {
+        if (!examActive || isSubmitting) return;
+
+        const key = e.key ? e.key.toLowerCase() : '';
+        const isPrintScreen =
+          e.key === 'PrintScreen' ||
+          e.code === 'PrintScreen' ||
+          key === 'printscreen';
+
+        const isMacScreenshot =
+          e.metaKey && e.shiftKey && ['3', '4', '5'].includes(key);
+
+        const isWinSnip =
+          (e.metaKey || e.ctrlKey) && e.shiftKey && ['s', 'x'].includes(key);
+
+        if (isPrintScreen || isMacScreenshot || isWinSnip) {
           e.preventDefault();
+          applyBlur(true);
+          triggerCheatViolation('Terdeteksi percobaan mengambil tangkapan layar (screenshot) pada perangkat.');
+          setTimeout(() => applyBlur(false), 1500);
+          return;
+        }
+
+        if (
+          e.key === 'F12' ||
+          ((e.ctrlKey || e.metaKey) && ['c', 'v', 'u', 's', 'p'].includes(key))
+        ) {
+          e.preventDefault();
+        }
+      });
+
+      // Cadangan deteksi saat tombol PrintScreen dilepas (keyup) di beberapa browser/OS
+      window.addEventListener('keyup', e => {
+        if (!examActive || isSubmitting) return;
+        if (e.key === 'PrintScreen' || e.code === 'PrintScreen') {
+          applyBlur(true);
+          triggerCheatViolation('Terdeteksi tombol PrintScreen / tangkapan layar (screenshot) ditekan.');
+          setTimeout(() => applyBlur(false), 1500);
         }
       });
     }
@@ -869,6 +932,8 @@
       isSubmitting = true;
       examActive = false;
       clearInterval(timerInterval);
+
+      Object.values(screens).forEach(s => s.classList.remove('screen-protected'));
 
       if (document.fullscreenElement) {
         document.exitFullscreen().catch(() => {});
